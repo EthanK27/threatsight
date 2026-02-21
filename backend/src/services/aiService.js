@@ -11,16 +11,87 @@ dotenv.config({ path: path.join(BACKEND_ROOT, ".env") });
 
 const UPLOADS_DIR = path.join(BACKEND_ROOT, "temp", "uploads");
 const OUTPUTS_DIR = path.join(BACKEND_ROOT, "outputs");
+const TEMP_OUTPUTS_DIR = path.join(BACKEND_ROOT, "temp", "outputs");
 const GEMINI_API_BASE_URL =
   process.env.GEMINI_API_BASE_URL ||
   "https://generativelanguage.googleapis.com/v1beta";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 const REQUEST_TIMEOUT_MS = Number(process.env.GEMINI_REQUEST_TIMEOUT_MS || 240000);
-const CHUNK_SIZE = Number(process.env.GEMINI_CHUNK_SIZE || 20);
-const MAX_CHUNK_PASSES = Number(process.env.GEMINI_MAX_CHUNK_PASSES || 8);
-const MAX_OUTPUT_TOKENS = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 4096);
+const MIN_CHUNK_SIZE = Math.max(
+  1,
+  Number(process.env.GEMINI_MIN_CHUNK_SIZE || 3)
+);
+const CHUNK_SIZE = Math.max(
+  MIN_CHUNK_SIZE,
+  Number(process.env.GEMINI_CHUNK_SIZE || 8)
+);
+const MAX_CHUNK_PASSES = Number(process.env.GEMINI_MAX_CHUNK_PASSES || 40);
+const CHUNK_COMPARE_RETRIES = Math.max(
+  1,
+  Number(process.env.GEMINI_CHUNK_COMPARE_RETRIES || 3)
+);
+const MAX_OUTPUT_TOKENS = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 8192);
 const THINKING_BUDGET = Number(process.env.GEMINI_THINKING_BUDGET || 0);
 const SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
+const SORT_MODES = ["pluginAsc", "pluginDesc", "nameAsc", "nameDesc"];
+
+const getSortInstruction = (sortMode) => {
+  switch (sortMode) {
+    case "pluginDesc":
+      return "Sort output by host (asc), pluginId (desc), name (asc), usn (asc).";
+    case "nameAsc":
+      return "Sort output by host (asc), name (asc), pluginId (asc), usn (asc).";
+    case "nameDesc":
+      return "Sort output by host (asc), name (desc), pluginId (asc), usn (asc).";
+    case "pluginAsc":
+    default:
+      return "Sort output by host (asc), pluginId (asc), name (asc), usn (asc).";
+  }
+};
+
+const getStagnationLevel = (noGrowthStreak) => {
+  if (noGrowthStreak <= 0) {
+    return 0;
+  }
+
+  if (noGrowthStreak <= 2) {
+    return 1;
+  }
+
+  if (noGrowthStreak <= 4) {
+    return 2;
+  }
+
+  return 3;
+};
+
+const getFocusHint = (stagnationLevel, severity) => {
+  if (stagnationLevel === 1) {
+    return `Continue scanning later entries in the ${severity} section. Return unseen rows only.`;
+  }
+
+  if (stagnationLevel === 2) {
+    return `Continue scanning deeper in the ${severity} section. Prioritize rows not previously returned and avoid repeating earlier rows.`;
+  }
+
+  if (stagnationLevel >= 3) {
+    return `Return only unseen rows from later/deeper parts of the ${severity} section. Prioritize different pluginId values than previously returned rows.`;
+  }
+
+  return "";
+};
+
+const getEffectiveBatchSize = (batchSize, stagnationLevel) => {
+  if (stagnationLevel >= 3) {
+    return MIN_CHUNK_SIZE;
+  }
+
+  if (stagnationLevel === 2) {
+    return Math.max(MIN_CHUNK_SIZE, batchSize - 2);
+  }
+
+  return batchSize;
+};
 
 const asStringOrNull = (value) => {
   if (value === undefined || value === null) {
@@ -77,6 +148,9 @@ const buildGeminiChunkPrompt = ({
   severity,
   limit = CHUNK_SIZE,
   excluded = [],
+  sortMode = "pluginAsc",
+  focusHint = "",
+  stagnationLevel = 0,
 }) => `
 You are a vulnerability extraction engine.
 Analyze the attached PDF and return only valid JSON.
@@ -90,11 +164,12 @@ Rules:
 5) Use reportId = "${reportId}" for every item.
 6) If a value is not present in the PDF, set it to null.
 7) Return at most ${limit} vulnerabilities.
-8) Sort output by host (asc), pluginId (asc), name (asc), usn (asc).
+8) ${getSortInstruction(sortMode)}
 9) Include only severity "${severity}" vulnerabilities.
 10) Ensure every string is valid JSON escaped text.
-11) Exclude any vulnerability with fingerprint in this list (host|pluginId|name|usn|severity):
+11) Exclude any vulnerability with identity key in this list (host|pluginId|severity|usn|normalizedName):
 ${excluded.length > 0 ? excluded.map((item) => `- ${item}`).join("\n") : "- none"}
+${focusHint ? `12) Focus hint for stagnation level ${stagnationLevel}: ${focusHint}` : ""}
 
 Required JSON schema:
 {
@@ -155,14 +230,38 @@ const normalizeSeverity = (value) => {
   return upper;
 };
 
-const makeFingerprint = (item) =>
-  [
-    asStringOrNull(item?.host) || "",
-    asStringOrNull(item?.pluginId) || "",
-    asStringOrNull(item?.name) || "",
-    asStringOrNull(item?.usn) || "",
-    normalizeSeverity(item?.severity) || "",
+const normalizeName = (value) => {
+  const name = asStringOrNull(value);
+
+  if (!name) {
+    return null;
+  }
+
+  return name.normalize("NFKC").replace(/\s+/g, " ").trim();
+};
+
+const toStableIdentityRecord = (item) => {
+  return {
+    host: asStringOrNull(item?.host),
+    pluginId: asStringOrNull(item?.pluginId),
+    severity: normalizeSeverity(item?.severity),
+    usn: asStringOrNull(item?.usn),
+    name: normalizeName(item?.name),
+  };
+};
+
+const makeStableIdentityKey = (item) => {
+  const record = toStableIdentityRecord(item);
+  return [
+    record.host || "",
+    record.pluginId || "",
+    record.severity || "",
+    record.usn || "",
+    record.name || "",
   ].join("|");
+};
+
+const makeFingerprint = (item) => makeStableIdentityKey(item);
 
 const dedupeByFingerprint = (items) => {
   const seen = new Set();
@@ -178,6 +277,40 @@ const dedupeByFingerprint = (items) => {
   }
 
   return deduped;
+};
+
+const makeComparisonKey = (record) => makeStableIdentityKey(record);
+
+const canonicalizeChunkItems = (items) =>
+  JSON.stringify(
+    dedupeByFingerprint(items)
+      .map((item) => toStableIdentityRecord(item))
+      .sort((a, b) =>
+        makeComparisonKey(a).localeCompare(makeComparisonKey(b))
+      )
+  );
+
+const pickConsensusChunkItems = (candidateFrequencyMap) => {
+  const candidates = Array.from(candidateFrequencyMap.values());
+  const hasNonEmptyCandidate = candidates.some(
+    (candidate) => candidate.items.length > 0
+  );
+  const filteredCandidates = hasNonEmptyCandidate
+    ? candidates.filter((candidate) => candidate.items.length > 0)
+    : candidates;
+  const countWithPluginId = (items) =>
+    items.reduce(
+      (sum, item) => sum + (asStringOrNull(item?.pluginId) ? 1 : 0),
+      0
+    );
+  const ranked = filteredCandidates.sort(
+    (a, b) =>
+      b.count - a.count ||
+      b.items.length - a.items.length ||
+      countWithPluginId(b.items) - countWithPluginId(a.items)
+  );
+
+  return ranked[0]?.items || [];
 };
 
 const getLatestPdfPath = async (uploadsDir = UPLOADS_DIR) => {
@@ -214,25 +347,28 @@ const normalizeVulnerabilityOutput = (rawAnalysis, reportId) => {
       _id: null,
       reportId: asStringOrNull(item?.reportId) || reportId,
       host: asStringOrNull(item?.host),
-      severity: asStringOrNull(item?.severity),
+      severity: normalizeSeverity(item?.severity),
       cvssV3: asNumberOrNull(item?.cvssV3 ?? item?.cvss),
       vpr: asNumberOrNull(item?.vpr),
       epss: asNumberOrNull(item?.epss),
       pluginId: asStringOrNull(item?.pluginId),
-      name: asStringOrNull(item?.name),
+      name: normalizeName(item?.name),
       usn: asStringOrNull(item?.usn),
     })),
   };
 };
 
-const callGeminiForPdf = async (pdfPath, prompt, maxOutputTokens = MAX_OUTPUT_TOKENS) => {
+const callGeminiForPdf = async (
+  pdfBase64,
+  prompt,
+  maxOutputTokens = MAX_OUTPUT_TOKENS
+) => {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
 
   if (!apiKey) {
     throw new Error("Missing GEMINI_API_KEY in backend/.env.");
   }
 
-  const pdfBuffer = await fs.readFile(pdfPath);
   const endpoint =
     `${GEMINI_API_BASE_URL}/models/${encodeURIComponent(GEMINI_MODEL)}` +
     `:generateContent?key=${encodeURIComponent(apiKey)}`;
@@ -246,7 +382,7 @@ const callGeminiForPdf = async (pdfPath, prompt, maxOutputTokens = MAX_OUTPUT_TO
           {
             inlineData: {
               mimeType: "application/pdf",
-              data: pdfBuffer.toString("base64"),
+              data: pdfBase64,
             },
           },
         ],
@@ -314,67 +450,306 @@ const callGeminiForPdf = async (pdfPath, prompt, maxOutputTokens = MAX_OUTPUT_TO
   };
 };
 
-const extractInChunks = async (pdfPath, reportId) => {
+const extractInChunks = async (pdfBuffer, reportId, crossCheckPaths = null) => {
   const aggregated = [];
   let totalCalls = 0;
+  let mismatchedChunksResolved = 0;
+  const severityProgress = [];
+  const pdfBase64 = pdfBuffer.toString("base64");
 
-  for (const severity of SEVERITY_ORDER) {
-    let batchSize = CHUNK_SIZE;
+  if (crossCheckPaths) {
+    await fs.mkdir(path.dirname(crossCheckPaths.primaryPath), { recursive: true });
+  }
 
-    for (let pass = 0; pass < MAX_CHUNK_PASSES; pass += 1) {
-      totalCalls += 1;
-      const excludedFingerprints = aggregated
-        .filter((item) => normalizeSeverity(item?.severity) === severity)
-        .map(makeFingerprint)
-        .slice(-200);
-      const prompt = buildGeminiChunkPrompt({
-        reportId,
-        severity,
-        limit: batchSize,
-        excluded: excludedFingerprints,
-      });
+  const executeCrossCheckedPass = async ({
+    baseline,
+    prompt,
+    severity,
+    passNumber,
+    batchSizeForMeta,
+    currentBatchSize,
+    reduceBatchSizeForJsonRecovery,
+  }) => {
+    let reducedChunkForJsonRecovery = false;
+    let matched = false;
+    let matchedAggregated = baseline;
+    let sawMaxTokens = false;
+    const candidateFrequency = new Map();
 
-      let response;
+    for (let attempt = 1; attempt <= CHUNK_COMPARE_RETRIES; attempt += 1) {
+      let primaryResponse;
+      let secondaryResponse;
+
       try {
-        response = await callGeminiForPdf(pdfPath, prompt);
+        totalCalls += 1;
+        primaryResponse = await callGeminiForPdf(pdfBase64, prompt);
+        totalCalls += 1;
+        secondaryResponse = await callGeminiForPdf(pdfBase64, prompt);
       } catch (error) {
         const isJsonSyntaxError = error instanceof SyntaxError;
 
         if (
           (isJsonSyntaxError ||
             /Failed to parse Gemini response as JSON|Expected .* in JSON|Unterminated string in JSON/.test(
-            String(error?.message || "")
-          )) &&
-          batchSize > 5
+              String(error?.message || "")
+            )) &&
+          currentBatchSize > MIN_CHUNK_SIZE
         ) {
-          batchSize = Math.max(5, Math.floor(batchSize / 2));
-          continue;
+          reduceBatchSizeForJsonRecovery();
+          reducedChunkForJsonRecovery = true;
+          break;
         }
 
         throw error;
       }
 
-      const normalized = normalizeVulnerabilityOutput(response.analysis, reportId);
-      const severityItems = normalized.vulnerabilities.filter(
+      const primaryItems = normalizeVulnerabilityOutput(
+        primaryResponse.analysis,
+        reportId
+      ).vulnerabilities.filter(
         (item) => normalizeSeverity(item?.severity) === severity
       );
-      const before = aggregated.length;
-      aggregated.push(...severityItems);
-      const deduped = dedupeByFingerprint(aggregated);
-      aggregated.length = 0;
-      aggregated.push(...deduped);
-      const addedCount = aggregated.length - before;
+      const secondaryItems = normalizeVulnerabilityOutput(
+        secondaryResponse.analysis,
+        reportId
+      ).vulnerabilities.filter(
+        (item) => normalizeSeverity(item?.severity) === severity
+      );
 
-      if (addedCount === 0) {
+      const primaryKey = canonicalizeChunkItems(primaryItems);
+      const secondaryKey = canonicalizeChunkItems(secondaryItems);
+      if (!candidateFrequency.has(primaryKey)) {
+        candidateFrequency.set(primaryKey, { count: 0, items: primaryItems });
+      }
+      if (!candidateFrequency.has(secondaryKey)) {
+        candidateFrequency.set(secondaryKey, { count: 0, items: secondaryItems });
+      }
+      candidateFrequency.get(primaryKey).count += 1;
+      candidateFrequency.get(secondaryKey).count += 1;
+      sawMaxTokens =
+        sawMaxTokens ||
+        primaryResponse.finishReason === "MAX_TOKENS" ||
+        secondaryResponse.finishReason === "MAX_TOKENS";
+
+      const primaryCandidate = dedupeByFingerprint([...baseline, ...primaryItems]);
+      const secondaryCandidate = dedupeByFingerprint([
+        ...baseline,
+        ...secondaryItems,
+      ]);
+
+      await syncCrossCheckFiles({
+        crossCheckPaths,
+        primaryVulnerabilities: primaryCandidate,
+        secondaryVulnerabilities: secondaryCandidate,
+        reportId,
+        meta: {
+          status: "cross-checking",
+          severity,
+          pass: passNumber,
+          attempt,
+          batchSize: batchSizeForMeta,
+          totalCalls,
+          mismatchResolved: false,
+        },
+      });
+
+      if (primaryKey === secondaryKey) {
+        matched = true;
+        matchedAggregated = primaryCandidate;
+
+        await syncCrossCheckFiles({
+          crossCheckPaths,
+          primaryVulnerabilities: matchedAggregated,
+          secondaryVulnerabilities: matchedAggregated,
+          reportId,
+          meta: {
+            status: "matched",
+            severity,
+            pass: passNumber,
+            attempt,
+            batchSize: batchSizeForMeta,
+            totalCalls,
+            mismatchResolved: false,
+          },
+        });
+
         break;
       }
+    }
 
-      if (response.finishReason === "MAX_TOKENS" && batchSize > 5) {
-        batchSize = Math.max(5, Math.floor(batchSize / 2));
+    if (reducedChunkForJsonRecovery) {
+      return {
+        reducedChunkForJsonRecovery: true,
+        sawMaxTokens,
+        aggregated: baseline,
+      };
+    }
+
+    if (matched) {
+      return {
+        reducedChunkForJsonRecovery: false,
+        sawMaxTokens,
+        aggregated: matchedAggregated,
+      };
+    }
+
+    mismatchedChunksResolved += 1;
+    const resolvedItems = pickConsensusChunkItems(candidateFrequency);
+    const resolvedAggregated = dedupeByFingerprint([...baseline, ...resolvedItems]);
+
+    await syncCrossCheckFiles({
+      crossCheckPaths,
+      primaryVulnerabilities: resolvedAggregated,
+      secondaryVulnerabilities: resolvedAggregated,
+      reportId,
+      meta: {
+        status: "mismatch-resolved",
+        severity,
+        pass: passNumber,
+        attempt: CHUNK_COMPARE_RETRIES,
+        batchSize: batchSizeForMeta,
+        totalCalls,
+        mismatchResolved: true,
+        resolvedWithConsensus: true,
+      },
+    });
+
+    return {
+      reducedChunkForJsonRecovery: false,
+      sawMaxTokens,
+      aggregated: resolvedAggregated,
+    };
+  };
+
+  for (const severity of SEVERITY_ORDER) {
+    let batchSize = CHUNK_SIZE;
+    let consecutiveNoGrowthPasses = 0;
+
+    for (let pass = 0; pass < MAX_CHUNK_PASSES; pass += 1) {
+      const stagnationLevel = getStagnationLevel(consecutiveNoGrowthPasses);
+      const sortMode = SORT_MODES[(pass + stagnationLevel) % SORT_MODES.length];
+      const focusHint = getFocusHint(stagnationLevel, severity);
+      const effectiveBatchSize = getEffectiveBatchSize(batchSize, stagnationLevel);
+      const before = aggregated.length;
+      const baseline = [...aggregated];
+      const excludedFingerprints = baseline
+        .filter((item) => normalizeSeverity(item?.severity) === severity)
+        .map(makeFingerprint)
+        .slice(-200);
+      const prompt = buildGeminiChunkPrompt({
+        reportId,
+        severity,
+        limit: effectiveBatchSize,
+        excluded: excludedFingerprints,
+        sortMode,
+        focusHint,
+        stagnationLevel,
+      });
+
+      const passResult = await executeCrossCheckedPass({
+        baseline,
+        prompt,
+        severity,
+        passNumber: pass + 1,
+        batchSizeForMeta: effectiveBatchSize,
+        currentBatchSize: batchSize,
+        reduceBatchSizeForJsonRecovery: () => {
+          batchSize = Math.max(MIN_CHUNK_SIZE, Math.floor(batchSize / 2));
+        },
+      });
+
+      if (passResult.reducedChunkForJsonRecovery) {
         continue;
       }
 
-      if (severityItems.length < batchSize) {
+      let sawMaxTokens = passResult.sawMaxTokens;
+      aggregated.length = 0;
+      aggregated.push(...passResult.aggregated);
+      const addedCount = aggregated.length - before;
+      let resolvedAddedCount = addedCount;
+      let escapeAttemptUsed = false;
+      let escapeAddedCount = 0;
+
+      if (resolvedAddedCount === 0) {
+        escapeAttemptUsed = true;
+        const escapeStagnationLevel = Math.min(3, stagnationLevel + 1);
+        const escapeSortMode =
+          SORT_MODES[(pass + escapeStagnationLevel) % SORT_MODES.length];
+        const escapeFocusHint = getFocusHint(escapeStagnationLevel, severity);
+        const escapeEffectiveBatchSize = getEffectiveBatchSize(
+          batchSize,
+          escapeStagnationLevel
+        );
+        const escapeBaseline = [...aggregated];
+        const escapeExcludedFingerprints = escapeBaseline
+          .filter((item) => normalizeSeverity(item?.severity) === severity)
+          .map(makeFingerprint)
+          .slice(-200);
+        const escapePrompt = buildGeminiChunkPrompt({
+          reportId,
+          severity,
+          limit: escapeEffectiveBatchSize,
+          excluded: escapeExcludedFingerprints,
+          sortMode: escapeSortMode,
+          focusHint: escapeFocusHint,
+          stagnationLevel: escapeStagnationLevel,
+        });
+        const escapeResult = await executeCrossCheckedPass({
+          baseline: escapeBaseline,
+          prompt: escapePrompt,
+          severity,
+          passNumber: pass + 1,
+          batchSizeForMeta: escapeEffectiveBatchSize,
+          currentBatchSize: batchSize,
+          reduceBatchSizeForJsonRecovery: () => {
+            batchSize = Math.max(MIN_CHUNK_SIZE, Math.floor(batchSize / 2));
+          },
+        });
+
+        if (escapeResult.reducedChunkForJsonRecovery) {
+          continue;
+        }
+
+        sawMaxTokens = sawMaxTokens || escapeResult.sawMaxTokens;
+        aggregated.length = 0;
+        aggregated.push(...escapeResult.aggregated);
+        escapeAddedCount = aggregated.length - escapeBaseline.length;
+        resolvedAddedCount = aggregated.length - before;
+
+        if (escapeAddedCount > 0) {
+          consecutiveNoGrowthPasses = 0;
+        } else {
+          consecutiveNoGrowthPasses += 1;
+        }
+      } else {
+        consecutiveNoGrowthPasses = 0;
+      }
+
+      const collectedCountForSeverity = aggregated.filter(
+        (item) => normalizeSeverity(item?.severity) === severity
+      ).length;
+      severityProgress.push({
+        severity,
+        pass: pass + 1,
+        batchSize,
+        addedCount: resolvedAddedCount,
+        consecutiveNoGrowthPasses,
+        collectedCountForSeverity,
+        sawMaxTokens,
+        stagnationLevel,
+        sortMode,
+        effectiveBatchSize,
+        focusHintApplied: focusHint.length > 0,
+        escapeAttemptUsed,
+        escapeAddedCount,
+      });
+
+      if (sawMaxTokens && batchSize > MIN_CHUNK_SIZE) {
+        batchSize = Math.max(MIN_CHUNK_SIZE, Math.floor(batchSize / 2));
+        continue;
+      }
+
+      if (consecutiveNoGrowthPasses >= 3) {
         break;
       }
     }
@@ -384,6 +759,8 @@ const extractInChunks = async (pdfPath, reportId) => {
     vulnerabilities: aggregated,
     meta: {
       totalCalls,
+      mismatchedChunksResolved,
+      severityProgress,
     },
   };
 };
@@ -399,18 +776,82 @@ const writeOutputJson = async (pdfPath, analysis, outputsDir = OUTPUTS_DIR) => {
   return outputPath;
 };
 
+const buildCrossCheckOutputPaths = (pdfPath, outputsDir = TEMP_OUTPUTS_DIR) => {
+  const source = path.parse(pdfPath).name;
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+  return {
+    primaryPath: path.join(outputsDir, `${source}-${timestamp}-crosscheck-a.json`),
+    secondaryPath: path.join(outputsDir, `${source}-${timestamp}-crosscheck-b.json`),
+  };
+};
+
+const writeCrossCheckSnapshot = async (
+  outputPath,
+  vulnerabilities,
+  reportId,
+  meta
+) => {
+  const normalized = normalizeVulnerabilityOutput({ vulnerabilities }, reportId);
+  await fs.writeFile(
+    outputPath,
+    JSON.stringify({ ...normalized, meta }, null, 2),
+    "utf8"
+  );
+};
+
+const syncCrossCheckFiles = async ({
+  crossCheckPaths,
+  primaryVulnerabilities,
+  secondaryVulnerabilities,
+  reportId,
+  meta,
+}) => {
+  if (!crossCheckPaths) {
+    return;
+  }
+
+  await Promise.all([
+    writeCrossCheckSnapshot(
+      crossCheckPaths.primaryPath,
+      primaryVulnerabilities,
+      reportId,
+      { ...meta, lane: "primary" }
+    ),
+    writeCrossCheckSnapshot(
+      crossCheckPaths.secondaryPath,
+      secondaryVulnerabilities,
+      reportId,
+      { ...meta, lane: "secondary" }
+    ),
+  ]);
+};
+
 export const analyzePdfToJson = async (pdfPath, reportId = "Report1") => {
   const resolvedPdfPath = pdfPath
     ? path.resolve(pdfPath)
     : await getLatestPdfPath(UPLOADS_DIR);
+  const pdfBuffer = await fs.readFile(resolvedPdfPath);
 
-  const rawAnalysis = await extractInChunks(resolvedPdfPath, reportId);
-  const analysis = normalizeVulnerabilityOutput(rawAnalysis, reportId);
+  const crossCheckOutputPaths = buildCrossCheckOutputPaths(
+    resolvedPdfPath,
+    TEMP_OUTPUTS_DIR
+  );
+  const rawAnalysis = await extractInChunks(
+    pdfBuffer,
+    reportId,
+    crossCheckOutputPaths
+  );
+  const analysis = {
+    ...normalizeVulnerabilityOutput(rawAnalysis, reportId),
+    meta: rawAnalysis.meta,
+  };
   const outputPath = await writeOutputJson(resolvedPdfPath, analysis, OUTPUTS_DIR);
 
   return {
     pdfPath: resolvedPdfPath,
     outputPath,
+    crossCheckOutputPaths,
     analysis,
   };
 };
