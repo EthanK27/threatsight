@@ -14,6 +14,7 @@ const vulnWiresharkSchema = new mongoose.Schema(
     DestIP: { type: String, required: true },
     Protocol: { type: String, required: true },
     Info: { type: String, required: true },
+    Mal: { type: Number, required: true },
   },
   { timestamps: true, versionKey: false }
 );
