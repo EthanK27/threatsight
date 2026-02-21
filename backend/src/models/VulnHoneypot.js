@@ -1,0 +1,24 @@
+import mongoose from "mongoose";
+
+const vulnHoneypotSchema = new mongoose.Schema(
+  {
+    reportId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Report",
+      required: true,
+      index: true,
+    },
+
+    host: { type: String, required: true },
+    severity: { type: mongoose.Schema.Types.Mixed, required: true },
+    cvssV3: { type: Number, default: null },
+    vpr: { type: Number, default: null },
+    epss: { type: Number, default: null },
+    pluginId: { type: mongoose.Schema.Types.Mixed, required: true },
+    name: { type: String, required: true },
+    usn: { type: String, default: null },
+  },
+  { timestamps: true, versionKey: false }
+);
+
+export default mongoose.model("VulnHoneypot", vulnHoneypotSchema);
