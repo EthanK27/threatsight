@@ -1,31 +1,23 @@
 import { useState } from "react";
-import {
-    uploadNessusPdf,
-    fetchLatestNessusReport,
-    fetchNessusFindings,
-} from "../api/nessus";
-import NessusReportView from "./nessus/NessusReportView";
+import { fetchLatestNessusReport, uploadAndProcessNessusPdf } from "../api/nessus";
 
 export default function NessusTab() {
     const [file, setFile] = useState(null);
-    const [status, setStatus] = useState("idle"); // idle | uploading | success | error
-    const [result, setResult] = useState(null);
+    const [status, setStatus] = useState("idle"); // idle | uploading | success | error | loading
+    const [uploadResult, setUploadResult] = useState(null);
+    const [latestData, setLatestData] = useState(null);
     const [error, setError] = useState("");
 
-    const [reportId, setReportId] = useState(null);
-    const [findings, setFindings] = useState([]);
-    const [loadingFindings, setLoadingFindings] = useState(false);
-
-    const loadFindings = async (rid) => {
-        setLoadingFindings(true);
+    const loadLatestReport = async () => {
+        setStatus("loading");
         setError("");
         try {
-            const rows = await fetchNessusFindings(rid);
-            setFindings(rows);
+            const data = await fetchLatestNessusReport();
+            setLatestData(data);
+            setStatus("success");
         } catch (err) {
-            setError(err?.message || "Failed to load findings");
-        } finally {
-            setLoadingFindings(false);
+            setStatus("error");
+            setError(err?.message || "Failed loading latest report");
         }
     };
 
@@ -34,29 +26,16 @@ export default function NessusTab() {
 
         setStatus("uploading");
         setError("");
-        setResult(null);
-        setFindings([]);
-        setReportId(null);
+        setUploadResult(null);
 
         try {
-            const data = await uploadNessusPdf(file);
-            setResult(data);
+            const reportName = file.name.replace(/\.pdf$/i, "").trim();
+            const data = await uploadAndProcessNessusPdf({ file, reportName });
+            setUploadResult(data);
+
+            const latest = await fetchLatestNessusReport();
+            setLatestData(latest);
             setStatus("success");
-
-            let rid = data?.reportId || data?._id || data?.savedReportId || null;
-
-            // Temporary fallback for upload responses that do not include reportId.
-            if (!rid) {
-                const latest = await fetchLatestNessusReport();
-                rid = latest?.reportId || latest?._id || null;
-            }
-
-            if (!rid) {
-                throw new Error("Upload succeeded but no Nessus reportId was available.");
-            }
-
-            setReportId(rid);
-            await loadFindings(rid);
         } catch (err) {
             setError(err?.message || "Upload failed");
             setStatus("error");
@@ -79,45 +58,67 @@ export default function NessusTab() {
                     <button
                         type="button"
                         onClick={uploadPdf}
-                        disabled={!file || status === "uploading"}
+                        disabled={!file || status === "uploading" || status === "loading"}
                         className={[
-                            "rounded-md border border-white/10 px-4 py-2 text-sm font-medium",
-                            !file || status === "uploading"
-                                ? "cursor-not-allowed bg-white/5 opacity-50"
+                            "px-4 py-2 rounded-md text-sm font-medium border border-white/10",
+                            !file || status === "uploading" || status === "loading"
+                                ? "bg-white/5 opacity-50 cursor-not-allowed"
                                 : "bg-accent/30 hover:bg-accent/40",
                         ].join(" ")}
                     >
-                        {status === "uploading" ? "Uploading..." : "Upload PDF"}
+                        {status === "uploading"
+                            ? "Uploading + Processing..."
+                            : status === "loading"
+                                ? "Loading..."
+                                : "Upload PDF"}
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={loadLatestReport}
+                        disabled={status === "uploading" || status === "loading"}
+                        className={[
+                            "px-4 py-2 rounded-md text-sm font-medium border border-white/10",
+                            status === "uploading" || status === "loading"
+                                ? "bg-white/5 opacity-50 cursor-not-allowed"
+                                : "bg-white/10 hover:bg-white/20",
+                        ].join(" ")}
+                    >
+                        Load Latest Stored Report
                     </button>
 
                     {status === "error" && <div className="text-sm text-red-300">{error}</div>}
 
-                    {status === "success" && result && (
-                        <div className="rounded-md border border-white/10 bg-white/5 p-3 text-sm">
-                            <div className="mb-1 font-medium">Upload successful</div>
-                            {"savedAs" in result ? (
-                                <div className="text-textMain/70">Saved as: {result.savedAs}</div>
-                            ) : null}
-                            {"bytes" in result ? (
-                                <div className="text-textMain/70">Size: {result.bytes} bytes</div>
-                            ) : null}
-                            {reportId ? (
-                                <div className="text-textMain/70">Report ID: {reportId}</div>
-                            ) : null}
+                    {uploadResult && (
+                        <div className="text-sm bg-white/5 border border-white/10 rounded-md p-3">
+                            <div className="font-medium mb-1">Upload + AI + DB complete</div>
+                            <div className="text-textMain/70">Saved as: {uploadResult.savedAs}</div>
+                            <div className="text-textMain/70">
+                                Parsed vulnerabilities: {uploadResult?.analysis?.vulnerabilityCount || 0}
+                            </div>
+                            <div className="text-textMain/70">
+                                Report ID: {uploadResult?.db?.reportId || "n/a"}
+                            </div>
+                        </div>
+                    )}
+
+                    {latestData && (
+                        <div className="text-sm bg-white/5 border border-white/10 rounded-md p-3">
+                            <div className="font-medium mb-1">Latest Report Pull (from DB)</div>
+                            <div className="text-textMain/70">
+                                Report: {latestData?.report?.reportName || "none"}
+                            </div>
+                            <div className="text-textMain/70">
+                                Items: {Array.isArray(latestData?.items) ? latestData.items.length : 0}
+                            </div>
+                            <pre className="mt-3 overflow-x-auto max-h-80 text-xs whitespace-pre-wrap break-all">
+                                {JSON.stringify(latestData, null, 2)}
+                            </pre>
                         </div>
                     )}
                 </div>
-
-                {reportId ? (
-                    <div className="mt-4">
-                        {loadingFindings ? (
-                            <div className="text-sm text-textMain/70">Loading findings...</div>
-                        ) : (
-                            <NessusReportView findings={findings} />
-                        )}
-                    </div>
-                ) : null}
             </div>
+            
         </div>
     );
 }

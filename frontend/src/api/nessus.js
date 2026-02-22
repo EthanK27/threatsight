@@ -1,18 +1,16 @@
-// src/api/nessus.js
-import { apiGet, apiPostForm } from "./client";
+import { apiFetch } from "./client";
 
-export async function uploadNessusPdf(file) {
+export const uploadAndProcessNessusPdf = async ({ file, reportName }) => {
     const formData = new FormData();
-    formData.append("nessusPdf", file); // must match multer field name
-    return apiPostForm("/api/analysis/nessus/upload", formData);
-}
+    formData.append("nessusPdf", file);
+    if (reportName) formData.append("reportName", reportName);
 
-export async function fetchNessusFindings(reportId) {
-    const data = await apiGet(`/api/analysis/nessus/reports/${reportId}/findings`);
-    return Array.isArray(data) ? data : (data?.findings ?? []);
-}
+    return apiFetch("/api/analysis/nessus/upload", {
+        method: "POST",
+        body: formData,
+    });
+};
 
-export async function fetchLatestNessusReport() {
-    const data = await apiGet("/api/analysis/nessus/reports/latest");
-    return data ?? null;
-}
+export const fetchLatestNessusReport = async () => {
+    return apiFetch("/api/reports/latest?mode=Nessus");
+};

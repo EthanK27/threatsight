@@ -4,10 +4,13 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import Report from "../models/Report.js";
+import { analyzePdfToJson } from "../services/aiRead.js";
+import { importNessusReport } from "../services/pdfService.js";
 import {
     getLatestNessusReport,
     getNessusFindings,
 } from "../controllers/analysisController.js";
+
 
 const router = express.Router();
 
@@ -46,24 +49,41 @@ const upload = multer({
     },
 });
 
+const normalizeReportName = (name) => {
+    if (!name || typeof name !== "string") return null;
+    const trimmed = name.trim();
+    return trimmed.length > 0 ? trimmed : null;
+};
+
+// Upload PDF -> AI extract -> store in DB.
 router.post("/nessus/upload", upload.single("nessusPdf"), async (req, res, next) => {
     try {
         if (!req.file) return res.status(400).json({ error: "Missing file: nessusPdf" });
+        const stat = await fs.stat(req.file.path);
+        const reportNameFromBody = normalizeReportName(req.body?.reportName);
+        const inferredName = path.parse(req.file.originalname).name;
+        const reportName = reportNameFromBody || inferredName || "Nessus Report";
 
-        // For now, return latest Nessus report so frontend can immediately query findings.
-        const [stat, latest] = await Promise.all([
-            fs.stat(req.file.path),
-            Report.findOne({ mode: "Nessus" }).sort({ createdAt: -1 }).select("_id").lean(),
-        ]);
+        const analysisResult = await analyzePdfToJson(req.file.path, reportName);
+        const importResult = await importNessusReport({
+            reportName,
+            payload: analysisResult.analysis,
+        });
 
         return res.json({
             ok: true,
-            reportId: latest?._id ?? null,
+            reportName,
             savedAs: req.file.filename,
             fullPath: req.file.path,
             bytes: stat.size,
             mimetype: req.file.mimetype,
             originalname: req.file.originalname,
+            analysis: {
+                outputPath: analysisResult.outputPath,
+                pageCount: analysisResult.pageCount,
+                vulnerabilityCount: analysisResult.analysis?.vulnerabilities?.length || 0,
+            },
+            db: importResult,
         });
     } catch (err) {
         next(err);

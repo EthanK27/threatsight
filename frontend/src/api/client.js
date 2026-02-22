@@ -1,33 +1,32 @@
-// src/api/client.js
-export async function apiGet(path) {
-    const res = await fetch(path, { method: "GET" });
-    const text = await res.text();
-    const data = text ? safeJson(text) : null;
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+
+const buildUrl = (path) => {
+    if (/^https?:\/\//i.test(path)) return path;
+    if (!API_BASE_URL) return path;
+    return `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+};
+
+export const apiFetch = async (path, options = {}) => {
+    const res = await fetch(buildUrl(path), options);
+    const rawBody = await res.text();
+
+    let data = null;
+    if (rawBody) {
+        try {
+            data = JSON.parse(rawBody);
+        } catch {
+            data = rawBody;
+        }
+    }
 
     if (!res.ok) {
-        throw new Error(data?.error || `GET ${path} failed (${res.status})`);
+        const message =
+            (data && typeof data === "object" && (data.error || data.message)) ||
+            `Request failed (${res.status})`;
+        throw new Error(message);
     }
+
     return data;
-}
+};
 
-export async function apiPostForm(path, formData) {
-    const res = await fetch(path, { method: "POST", body: formData });
-    const text = await res.text();
-    const data = text ? safeJson(text) : null;
-
-    if (!res.ok) {
-        throw new Error(data?.error || `POST ${path} failed (${res.status})`);
-    }
-    if (!data) {
-        throw new Error("Request succeeded but response was not JSON.");
-    }
-    return data;
-}
-
-function safeJson(text) {
-    try {
-        return JSON.parse(text);
-    } catch {
-        return null;
-    }
-}
+export default apiFetch;

@@ -72,3 +72,33 @@ export const createReportWithData = async (req, res, next) => {
     next(err);
   }
 };
+
+export const getLatestReportWithItems = async (req, res, next) => {
+  try {
+    const mode = req.query.mode || "Nessus";
+    if (mode !== "Nessus") {
+      return res.status(400).json({
+        ok: false,
+        error: "Only mode=Nessus is currently supported on this endpoint",
+      });
+    }
+
+    const report = await Report.findOne({ mode }).sort({ uploadedAt: -1, createdAt: -1 }).lean();
+    if (!report) {
+      return res.json({
+        ok: true,
+        report: null,
+        items: [],
+      });
+    }
+
+    const items = await VulnNessus.find({ reportId: report._id }).lean();
+    return res.json({
+      ok: true,
+      report,
+      items,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
