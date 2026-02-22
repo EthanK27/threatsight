@@ -1,5 +1,11 @@
 import { Router } from "express";
-import { createReportWithData, getAllWiresharkItems, getLatestReportWithItems } from "../controllers/reportController.js";
+import {
+  createReportWithData,
+  getAllHoneypotItems,
+  getAllWiresharkItems,
+  getLatestReportWithItems,
+  streamHoneypotEvents,
+} from "../controllers/reportController.js";
 
 const router = Router();
 
@@ -14,5 +20,7 @@ router.get("/", (_req, res) => {
 router.post("/", createReportWithData);
 router.get("/latest", getLatestReportWithItems);
 router.get("/wireshark/items", getAllWiresharkItems);
+router.get("/honeypot/items", getAllHoneypotItems);
+router.get("/honeypot/stream", streamHoneypotEvents);
 
 export default router;
