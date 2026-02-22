@@ -23,36 +23,23 @@ export const CHUNK_COMPARE_RETRIES = Math.max(
   Number(process.env.GEMINI_CHUNK_COMPARE_RETRIES || 3)
 );
 
-// Sends a single PDF+prompt request and returns parsed JSON plus finish reason.
-export const callGeminiForPdf = async (
-  pdfBase64,
-  prompt,
-  maxOutputTokens = MAX_OUTPUT_TOKENS
-) => {
+const buildGeminiEndpoint = () => {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) {
     throw new Error("Missing GEMINI_API_KEY in backend/.env.");
   }
 
-  const endpoint =
+  return (
     `${GEMINI_API_BASE_URL}/models/${encodeURIComponent(GEMINI_MODEL)}` +
-    `:generateContent?key=${encodeURIComponent(apiKey)}`;
+    `:generateContent?key=${encodeURIComponent(apiKey)}`
+  );
+};
+
+const callGemini = async ({ contents, maxOutputTokens = MAX_OUTPUT_TOKENS }) => {
+  const endpoint = buildGeminiEndpoint();
 
   const payload = {
-    contents: [
-      {
-        role: "user",
-        parts: [
-          { text: prompt },
-          {
-            inlineData: {
-              mimeType: "application/pdf",
-              data: pdfBase64,
-            },
-          },
-        ],
-      },
-    ],
+    contents,
     generationConfig: {
       responseMimeType: "application/json",
       temperature: 0,
@@ -112,7 +99,49 @@ export const callGeminiForPdf = async (
   };
 };
 
+// Sends a single PDF+prompt request and returns parsed JSON plus finish reason.
+export const callGeminiForPdf = async (
+  pdfBase64,
+  prompt,
+  maxOutputTokens = MAX_OUTPUT_TOKENS
+) => {
+  return callGemini({
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { text: prompt },
+          {
+            inlineData: {
+              mimeType: "application/pdf",
+              data: pdfBase64,
+            },
+          },
+        ],
+      },
+    ],
+    maxOutputTokens,
+  });
+};
+
+// Sends a single prompt-only request and returns parsed JSON plus finish reason.
+export const callGeminiForJsonPrompt = async (
+  prompt,
+  maxOutputTokens = MAX_OUTPUT_TOKENS
+) => {
+  return callGemini({
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: prompt }],
+      },
+    ],
+    maxOutputTokens,
+  });
+};
+
 export default {
   CHUNK_COMPARE_RETRIES,
   callGeminiForPdf,
+  callGeminiForJsonPrompt,
 };

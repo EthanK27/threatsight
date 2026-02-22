@@ -1,15 +1,20 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { CHUNK_COMPARE_RETRIES, callGeminiForPdf } from "./geminiClient.js";
+import {
+  CHUNK_COMPARE_RETRIES,
+  callGeminiForJsonPrompt,
+  callGeminiForPdf,
+} from "./geminiClient.js";
 import {
   asStringOrNull,
   canonicalizeChunkItems,
   countBySeverity,
   dedupeByFingerprint,
   dedupeBySoftFingerprint,
+  normalizeCategory,
   normalizeVulnerabilityOutput,
 } from "./fingerprints.js";
-import { buildGeminiPdfPrompt } from "./prompts.js";
+import { buildGeminiCategoryPrompt, buildGeminiPdfPrompt } from "./prompts.js";
 import {
   TEMP_OUTPUTS_DIR,
   UPLOADS_DIR,
@@ -82,6 +87,70 @@ const resolveConsensusItems = (candidateFrequency) => {
   );
 
   return ranked[0]?.items || [];
+};
+
+const toValidCategoryIndex = (value, itemCount) => {
+  const numeric = Number(value);
+  if (
+    Number.isInteger(numeric) &&
+    numeric >= 0 &&
+    numeric < itemCount
+  ) {
+    return numeric;
+  }
+  return null;
+};
+
+const categorizeResolvedChunk = async ({
+  items,
+  reportId,
+  pageNumber,
+  pageCount,
+  totalCallsRef,
+}) => {
+  if (!Array.isArray(items) || items.length === 0) {
+    return { items: [], sawMaxTokens: false };
+  }
+
+  const prompt = buildGeminiCategoryPrompt({
+    reportId,
+    pageNumber,
+    pageCount,
+    items,
+  });
+  let categoryResponse;
+  try {
+    totalCallsRef.count += 1;
+    categoryResponse = await callGeminiForJsonPrompt(prompt);
+  } catch (_error) {
+    return {
+      items: items.map((item) => ({ ...item, category: "Other" })),
+      sawMaxTokens: false,
+    };
+  }
+
+  const categoryRows = Array.isArray(categoryResponse.analysis?.categories)
+    ? categoryResponse.analysis.categories
+    : [];
+
+  const categoryByIndex = new Map();
+  for (const row of categoryRows) {
+    const index = toValidCategoryIndex(row?.index, items.length);
+    if (index === null || categoryByIndex.has(index)) {
+      continue;
+    }
+    categoryByIndex.set(index, normalizeCategory(row?.category));
+  }
+
+  const categorizedItems = items.map((item, index) => ({
+    ...item,
+    category: categoryByIndex.get(index) || "Other",
+  }));
+
+  return {
+    items: categorizedItems,
+    sawMaxTokens: categoryResponse.finishReason === "MAX_TOKENS",
+  };
 };
 
 // Runs primary/secondary prompts against a single page and resolves agreement.
@@ -171,10 +240,24 @@ const extractPageWithCrossCheck = async ({
     });
 
     if (primaryKey === secondaryKey) {
+      const categorized = await categorizeResolvedChunk({
+        items: primaryItems,
+        reportId,
+        pageNumber,
+        pageCount,
+        totalCallsRef,
+      });
+
       await syncCrossCheckFiles({
         crossCheckPaths,
-        primaryVulnerabilities: primaryCandidate,
-        secondaryVulnerabilities: secondaryCandidate,
+        primaryVulnerabilities: dedupeByFingerprint([
+          ...baseline,
+          ...categorized.items,
+        ]),
+        secondaryVulnerabilities: dedupeByFingerprint([
+          ...baseline,
+          ...categorized.items,
+        ]),
         reportId,
         meta: {
           status: "matched",
@@ -187,20 +270,32 @@ const extractPageWithCrossCheck = async ({
       });
 
       return {
-        items: primaryItems,
+        items: categorized.items,
         mismatchResolved: false,
-        sawMaxTokens,
+        sawMaxTokens: sawMaxTokens || categorized.sawMaxTokens,
       };
     }
   }
 
   const resolvedItems = resolveConsensusItems(candidateFrequency);
-  const resolvedAggregated = dedupeByFingerprint([...baseline, ...resolvedItems]);
+  const categorized = await categorizeResolvedChunk({
+    items: resolvedItems,
+    reportId,
+    pageNumber,
+    pageCount,
+    totalCallsRef,
+  });
 
   await syncCrossCheckFiles({
     crossCheckPaths,
-    primaryVulnerabilities: resolvedAggregated,
-    secondaryVulnerabilities: resolvedAggregated,
+    primaryVulnerabilities: dedupeByFingerprint([
+      ...baseline,
+      ...categorized.items,
+    ]),
+    secondaryVulnerabilities: dedupeByFingerprint([
+      ...baseline,
+      ...categorized.items,
+    ]),
     reportId,
     meta: {
       status: "mismatch-resolved",
@@ -215,9 +310,9 @@ const extractPageWithCrossCheck = async ({
   });
 
   return {
-    items: resolvedItems,
+    items: categorized.items,
     mismatchResolved: true,
-    sawMaxTokens,
+    sawMaxTokens: sawMaxTokens || categorized.sawMaxTokens,
   };
 };
 

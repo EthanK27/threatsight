@@ -2,6 +2,21 @@
 // These helpers make model outputs comparable and dedupe-stable.
 
 export const SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
+export const CATEGORY_ORDER = [
+  "Patching",
+  "Hardening",
+  "Cryptography",
+  "Authentication",
+  "Exposure",
+  "Application",
+  "Disclosure",
+  "Malware",
+  "Compliance",
+  "Other",
+];
+const CATEGORY_BY_KEY = new Map(
+  CATEGORY_ORDER.map((category) => [category.toUpperCase(), category])
+);
 
 export const asStringOrNull = (value) => {
   if (value === undefined || value === null) {
@@ -37,6 +52,14 @@ export const normalizeName = (value) => {
     return null;
   }
   return name.normalize("NFKC").replace(/\s+/g, " ").trim();
+};
+
+export const normalizeCategory = (value) => {
+  const category = asStringOrNull(value);
+  if (!category) {
+    return "Other";
+  }
+  return CATEGORY_BY_KEY.get(category.toUpperCase()) || "Other";
 };
 
 const toStableIdentityRecord = (item) => {
@@ -125,6 +148,7 @@ export const normalizeVulnerabilityOutput = (rawAnalysis, reportId) => {
       pluginId: asStringOrNull(item?.pluginId),
       name: normalizeName(item?.name),
       usn: asStringOrNull(item?.usn),
+      category: normalizeCategory(item?.category),
     })),
   };
 };
@@ -152,10 +176,12 @@ export const canonicalizeChunkItems = (items) =>
 
 export default {
   SEVERITY_ORDER,
+  CATEGORY_ORDER,
   asStringOrNull,
   asNumberOrNull,
   normalizeSeverity,
   normalizeName,
+  normalizeCategory,
   normalizeVulnerabilityOutput,
   dedupeByFingerprint,
   dedupeBySoftFingerprint,

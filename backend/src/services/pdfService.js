@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import Report from "../models/Report.js";
 import VulnNessus from "../models/VulnNessus.js";
+import { normalizeCategory } from "./fingerprints.js";
 
 export async function importNessusReport({ reportName, payload }) {
     if (!reportName?.trim()) throw new Error("reportName is required");
@@ -42,6 +43,7 @@ export async function importNessusReport({ reportName, payload }) {
                     pluginId: v.pluginId,
                     name: String(v.name),
                     usn: v.usn ?? null,
+                    category: normalizeCategory(v.category),
                 };
 
                 ops.push({

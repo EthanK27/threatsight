@@ -16,6 +16,22 @@ const vulnNessusSchema = new mongoose.Schema(
     pluginId: { type: mongoose.Schema.Types.Mixed, required: true },
     name: { type: String, required: true },
     usn: { type: String, default: null },
+    category: {
+      type: String,
+      enum: [
+        "Patching",
+        "Hardening",
+        "Cryptography",
+        "Authentication",
+        "Exposure",
+        "Application",
+        "Disclosure",
+        "Malware",
+        "Compliance",
+        "Other",
+      ],
+      default: "Other",
+    },
   },
   { timestamps: true, versionKey: false }
 );
