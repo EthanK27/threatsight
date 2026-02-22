@@ -88,6 +88,11 @@ const normalizeReportName = (name) => {
 
 // Upload PDF -> AI extract -> store in DB.
 router.post("/nessus/upload", upload.single("nessusPdf"), async (req, res, next) => {
+    let responsePayload = null;
+    let cleanup = null;
+    let processingError = null;
+    const hasUploadedFile = Boolean(req.file?.path);
+
     try {
         if (!req.file) return res.status(400).json({ error: "Missing file: nessusPdf" });
         const stat = await fs.stat(req.file.path);
@@ -100,9 +105,8 @@ router.post("/nessus/upload", upload.single("nessusPdf"), async (req, res, next)
             reportName,
             payload: analysisResult.analysis,
         });
-        const cleanup = await cleanupProcessingArtifacts();
 
-        return res.json({
+        responsePayload = {
             ok: true,
             reportName,
             savedAs: req.file.filename,
@@ -116,11 +120,39 @@ router.post("/nessus/upload", upload.single("nessusPdf"), async (req, res, next)
                 vulnerabilityCount: analysisResult.analysis?.vulnerabilities?.length || 0,
             },
             db: importResult,
-            cleanup,
-        });
+        };
     } catch (err) {
-        next(err);
+        processingError = err;
+    } finally {
+        if (hasUploadedFile) {
+            try {
+                cleanup = await cleanupProcessingArtifacts();
+            } catch (cleanupErr) {
+                if (!processingError) {
+                    processingError = cleanupErr;
+                } else {
+                    console.error("Cleanup failed after processing error:", cleanupErr);
+                }
+            }
+        }
     }
+
+    if (processingError) {
+        if (req.aborted || res.writableEnded) {
+            console.error("Processing failed after client disconnect:", processingError);
+            return;
+        }
+        return next(processingError);
+    }
+
+    if (req.aborted || res.writableEnded) {
+        return;
+    }
+
+    return res.json({
+        ...responsePayload,
+        cleanup,
+    });
 });
 
 router.get("/nessus/reports/latest", getLatestNessusReport);
