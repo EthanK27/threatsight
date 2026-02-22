@@ -3,6 +3,11 @@ import multer from "multer";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import Report from "../models/Report.js";
+import {
+    getLatestNessusReport,
+    getNessusFindings,
+} from "../controllers/analysisController.js";
 
 const router = express.Router();
 
@@ -12,7 +17,7 @@ const __dirname = path.dirname(__filename);
 // backend/src/routes -> backend
 const BACKEND_ROOT = path.resolve(__dirname, "..", "..");
 
-// Your desired folder: backend/uploads
+// Uploaded PDFs are staged here
 const UPLOADS_DIR = path.join(BACKEND_ROOT, "temp", "uploads");
 await fs.mkdir(UPLOADS_DIR, { recursive: true });
 
@@ -41,16 +46,19 @@ const upload = multer({
     },
 });
 
-// ✅ New route: upload pdf
 router.post("/nessus/upload", upload.single("nessusPdf"), async (req, res, next) => {
     try {
         if (!req.file) return res.status(400).json({ error: "Missing file: nessusPdf" });
 
-        // “for now”: confirm multer saved it + we can read it
-        const stat = await fs.stat(req.file.path);
+        // For now, return latest Nessus report so frontend can immediately query findings.
+        const [stat, latest] = await Promise.all([
+            fs.stat(req.file.path),
+            Report.findOne({ mode: "Nessus" }).sort({ createdAt: -1 }).select("_id").lean(),
+        ]);
 
         return res.json({
             ok: true,
+            reportId: latest?._id ?? null,
             savedAs: req.file.filename,
             fullPath: req.file.path,
             bytes: stat.size,
@@ -61,5 +69,8 @@ router.post("/nessus/upload", upload.single("nessusPdf"), async (req, res, next)
         next(err);
     }
 });
+
+router.get("/nessus/reports/latest", getLatestNessusReport);
+router.get("/nessus/reports/:reportId/findings", getNessusFindings);
 
 export default router;
