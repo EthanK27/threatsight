@@ -1,8 +1,14 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts";
 import WiresharkFindingsTable from "./WiresharkFindingsTable";
 
 const PROTOCOL_COLORS = ["#22c55e", "#3b82f6", "#f97316", "#eab308", "#a855f7", "#14b8a6"];
+const QUICK_PROMPTS = [
+  "Summarize selected logs",
+  "Why is this suspicious?",
+  "Show likely MITRE technique",
+  "Create investigation checklist",
+];
 
 function normalizeProtocol(value) {
   const raw = String(value || "").trim();
@@ -22,6 +28,8 @@ function countTop(items, key) {
 
 export default function WiresharkReportView({ findings = [] }) {
   const chartRef = useRef(null);
+  const [prompt, setPrompt] = useState("");
+  const [promptOut, setPromptOut] = useState("");
 
   const chartData = useMemo(() => {
     const protocolTotals = new Map();
@@ -88,6 +96,39 @@ export default function WiresharkReportView({ findings = [] }) {
     const topSender = countTop(findings, "SrcIP");
     return { totalPackets, topDestination, topSender };
   }, [findings]);
+
+  const promptContext = useMemo(() => {
+    const now = Date.now();
+    const recent = findings.filter((f) => {
+      const ts = new Date(f?.timestamp).getTime();
+      return Number.isFinite(ts) && now - ts <= 15 * 60 * 1000;
+    });
+    const sample = recent.length > 0 ? recent : findings;
+    const suspicious = sample.filter((f) => /(scan|exploit|malware|failed|brute|c2|flood|suspicious|beacon|dos)/i.test(`${f?.Info || ""} ${f?.Protocol || ""}`));
+    const topProtocol = countTop(sample, "Protocol");
+    const topSource = countTop(sample, "SrcIP");
+
+    return {
+      windowLabel: recent.length > 0 ? "last 15 minutes" : "all loaded packets",
+      packetCount: sample.length,
+      suspiciousCount: suspicious.length,
+      topProtocol,
+      topSource,
+    };
+  }, [findings]);
+
+  const runPrompt = () => {
+    setPromptOut(
+      [
+        `Prompt: ${prompt || "Summarize last 15 minutes"}.`,
+        `Window: ${promptContext.windowLabel}.`,
+        `Packets: ${promptContext.packetCount}, suspicious-pattern hits: ${promptContext.suspiciousCount}.`,
+        `Top protocol: ${promptContext.topProtocol.label} (${promptContext.topProtocol.count}).`,
+        `Top source: ${promptContext.topSource.label} (${promptContext.topSource.count}).`,
+        `Top destination: ${summary.topDestination.label} (${summary.topDestination.count}).`,
+      ].join(" ")
+    );
+  };
 
   useEffect(() => {
     if (!chartRef.current || chartData.series.length === 0 || chartData.labels.length === 0) return;
@@ -185,9 +226,29 @@ export default function WiresharkReportView({ findings = [] }) {
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-700 bg-slate-950/40 p-4">
-        <div className="text-sm font-semibold text-slate-200">AI Section</div>
-        <div className="mt-3 h-20 rounded-lg border border-dashed border-slate-600/80 bg-slate-900/40" />
+      <div className="rounded-xl border border-white/15 bg-white/5 p-4">
+        <div className="text-sm font-semibold">Gemini Box for input</div>
+        <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
+          <textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            placeholder="Explain this Wireshark traffic in plain English"
+            className="h-24 rounded-md border border-white/15 bg-black/25 p-2 text-sm outline-none"
+          />
+          <button type="button" onClick={runPrompt} className="rounded-md border border-white/15 bg-white/10 px-3 py-2 text-xs font-semibold">
+            Run Prompt
+          </button>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+          {QUICK_PROMPTS.map((quick) => (
+            <button key={quick} type="button" onClick={() => setPrompt(quick)} className="rounded-full border border-white/15 bg-white/10 px-3 py-1">
+              {quick}
+            </button>
+          ))}
+        </div>
+        <div className="mt-2 min-h-12 rounded-md border border-dashed border-white/20 bg-black/20 p-2 text-xs text-textMain/80">
+          {promptOut || "Output preview appears here."}
+        </div>
       </div>
 
       <WiresharkFindingsTable findings={findings} />
