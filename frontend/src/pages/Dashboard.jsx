@@ -1,4 +1,7 @@
 import { useState } from "react";
+import NessusTab from "../components/NessusTab";
+import WiresharkTab from "../components/WiresharkTab";
+import HoneypotTab from "../components/HoneyPot";
 
 const TABS = [
     { key: "nessus", label: "Nessus (PDF)" },
@@ -16,9 +19,7 @@ export default function Dashboard() {
                 <div className="flex items-center gap-3">
                     <div className="w-3 h-3 rounded-sm bg-textMain/80" />
                     <div>
-                        <div className="text-lg font-semibold tracking-wide">
-                            ThreatSite
-                        </div>
+                        <div className="text-lg font-semibold tracking-wide">ThreatSite</div>
                         <div className="text-xs text-textMain/70">Security Dashboard</div>
                     </div>
                 </div>
@@ -55,32 +56,18 @@ export default function Dashboard() {
             {/* Content area */}
             <main className="flex-1 px-6 py-6">
                 <section className="rounded-lg bg-white/5 border border-white/10 p-6">
-                    {activeTab === "nessus" && (
-                        <>
-                            <h2 className="text-lg font-semibold mb-2">Nessus (PDF)</h2>
-                            <p className="text-textMain/70">
-                                Upload panel + parsed results will go here.
-                            </p>
-                        </>
-                    )}
+                    {/* Keep all mounted; just hide */}
+                    <div className={activeTab === "nessus" ? "block" : "hidden"}>
+                        <NessusTab />
+                    </div>
 
-                    {activeTab === "wireshark" && (
-                        <>
-                            <h2 className="text-lg font-semibold mb-2">Wireshark</h2>
-                            <p className="text-textMain/70">
-                                Preloaded Wireshark dataset view goes here.
-                            </p>
-                        </>
-                    )}
+                    <div className={activeTab === "wireshark" ? "block" : "hidden"}>
+                        <WiresharkTab />
+                    </div>
 
-                    {activeTab === "honeypot" && (
-                        <>
-                            <h2 className="text-lg font-semibold mb-2">Honeypot</h2>
-                            <p className="text-textMain/70">
-                                Preloaded Honeypot dataset view goes here.
-                            </p>
-                        </>
-                    )}
+                    <div className={activeTab === "honeypot" ? "block" : "hidden"}>
+                        <HoneypotTab />
+                    </div>
                 </section>
             </main>
         </div>
