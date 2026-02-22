@@ -3,7 +3,6 @@ import multer from "multer";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import Report from "../models/Report.js";
 import { analyzePdfToJson } from "../services/aiRead.js";
 import { importNessusReport } from "../services/pdfService.js";
 import {
@@ -22,7 +21,39 @@ const BACKEND_ROOT = path.resolve(__dirname, "..", "..");
 
 // Uploaded PDFs are staged here
 const UPLOADS_DIR = path.join(BACKEND_ROOT, "temp", "uploads");
+const OUTPUTS_DIR = path.join(BACKEND_ROOT, "outputs");
+const TEMP_OUTPUTS_DIR = path.join(BACKEND_ROOT, "temp", "outputs");
 await fs.mkdir(UPLOADS_DIR, { recursive: true });
+
+const clearDirectoryEntries = async (dirPath, shouldDeleteEntry) => {
+    await fs.mkdir(dirPath, { recursive: true });
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    const targets = entries.filter(shouldDeleteEntry);
+    await Promise.all(
+        targets.map((entry) =>
+            fs.rm(path.join(dirPath, entry.name), { recursive: true, force: true })
+        )
+    );
+    return targets.length;
+};
+
+const cleanupProcessingArtifacts = async () => {
+    const removedOutputFiles = await clearDirectoryEntries(OUTPUTS_DIR, (entry) =>
+        entry.isFile()
+    );
+    const removedUploadDirs = await clearDirectoryEntries(UPLOADS_DIR, (entry) =>
+        entry.isDirectory()
+    );
+    const removedTempOutputFiles = await clearDirectoryEntries(TEMP_OUTPUTS_DIR, (entry) =>
+        entry.isFile()
+    );
+
+    return {
+        "outputs.files": removedOutputFiles,
+        "temp/uploads.directories": removedUploadDirs,
+        "temp/outputs.files": removedTempOutputFiles,
+    };
+};
 
 const storage = multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
@@ -69,6 +100,7 @@ router.post("/nessus/upload", upload.single("nessusPdf"), async (req, res, next)
             reportName,
             payload: analysisResult.analysis,
         });
+        const cleanup = await cleanupProcessingArtifacts();
 
         return res.json({
             ok: true,
@@ -84,6 +116,7 @@ router.post("/nessus/upload", upload.single("nessusPdf"), async (req, res, next)
                 vulnerabilityCount: analysisResult.analysis?.vulnerabilities?.length || 0,
             },
             db: importResult,
+            cleanup,
         });
     } catch (err) {
         next(err);
