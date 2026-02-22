@@ -1,13 +1,21 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts";
 import NessusFindingsTable from "./NessusFindingsTable";
 import { normalizeSeverity, SEVERITY_COLORS, SEVERITY_ORDER } from "../../utils/severity";
 
 const CHART_SEVERITIES = ["Critical", "High", "Medium", "Low"];
+const QUICK_PROMPTS = [
+  "Summarize selected logs",
+  "Why is this suspicious?",
+  "Show likely MITRE technique",
+  "Create investigation checklist",
+];
 
 export default function NessusReportView({ findings = [] }) {
   const severityChartRef = useRef(null);
   const hostChartRef = useRef(null);
+  const [prompt, setPrompt] = useState("");
+  const [promptOut, setPromptOut] = useState("");
 
   const severityData = useMemo(() => {
     const counts = new Map(CHART_SEVERITIES.map((label) => [label, 0]));
@@ -44,6 +52,32 @@ export default function NessusReportView({ findings = [] }) {
 
     return { total, critical, high, uniqueHosts };
   }, [findings]);
+
+  const promptContext = useMemo(() => {
+    const topHost = topHosts[0] || ["-", 0];
+    const bySeverity = CHART_SEVERITIES.map((label, index) => `${label}:${severityData.values[index]}`).join(", ");
+    const highRisk = findings.filter((f) => {
+      const sev = normalizeSeverity(f?.severity);
+      return sev === "Critical" || sev === "High";
+    }).length;
+    return {
+      topHost,
+      bySeverity,
+      highRisk,
+    };
+  }, [findings, severityData, topHosts]);
+
+  const runPrompt = () => {
+    setPromptOut(
+      [
+        `Prompt: ${prompt || "Summarize Nessus findings"}.`,
+        `Findings: ${summary.total}, high-risk (Critical/High): ${promptContext.highRisk}.`,
+        `Severity mix: ${promptContext.bySeverity}.`,
+        `Top affected host: ${promptContext.topHost[0]} (${promptContext.topHost[1]} findings).`,
+        `Unique hosts: ${summary.uniqueHosts}.`,
+      ].join(" ")
+    );
+  };
 
   useEffect(() => {
     if (!severityChartRef.current) return;
@@ -171,9 +205,29 @@ export default function NessusReportView({ findings = [] }) {
         </div>
       </div>
 
-      <div className="mt-4 rounded-xl border border-slate-700 bg-slate-950/40 p-4">
-        <div className="text-sm font-semibold text-slate-200">AI Section</div>
-        <div className="mt-3 h-32 rounded-lg border border-dashed border-slate-600/80 bg-slate-900/40" />
+      <div className="mt-4 rounded-xl border border-white/15 bg-white/5 p-4">
+        <div className="text-sm font-semibold">Gemini Box for input</div>
+        <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
+          <textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            placeholder="Explain these Nessus findings in plain English"
+            className="h-24 rounded-md border border-white/15 bg-black/25 p-2 text-sm outline-none"
+          />
+          <button type="button" onClick={runPrompt} className="rounded-md border border-white/15 bg-white/10 px-3 py-2 text-xs font-semibold">
+            Run Prompt
+          </button>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+          {QUICK_PROMPTS.map((quick) => (
+            <button key={quick} type="button" onClick={() => setPrompt(quick)} className="rounded-full border border-white/15 bg-white/10 px-3 py-1">
+              {quick}
+            </button>
+          ))}
+        </div>
+        <div className="mt-2 min-h-12 rounded-md border border-dashed border-white/20 bg-black/20 p-2 text-xs text-textMain/80">
+          {promptOut || "Output preview appears here."}
+        </div>
       </div>
 
       <div className="mt-4">
