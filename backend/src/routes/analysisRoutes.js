@@ -3,6 +3,8 @@ import multer from "multer";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { analyzePdfToJson } from "../services/aiRead.js";
+import { importNessusReport } from "../services/pdfService.js";
 
 const router = express.Router();
 
@@ -41,21 +43,41 @@ const upload = multer({
     },
 });
 
-// ✅ New route: upload pdf
+const normalizeReportName = (name) => {
+    if (!name || typeof name !== "string") return null;
+    const trimmed = name.trim();
+    return trimmed.length > 0 ? trimmed : null;
+};
+
+// Upload PDF -> AI extract -> store in DB.
 router.post("/nessus/upload", upload.single("nessusPdf"), async (req, res, next) => {
     try {
         if (!req.file) return res.status(400).json({ error: "Missing file: nessusPdf" });
-
-        // “for now”: confirm multer saved it + we can read it
         const stat = await fs.stat(req.file.path);
+        const reportNameFromBody = normalizeReportName(req.body?.reportName);
+        const inferredName = path.parse(req.file.originalname).name;
+        const reportName = reportNameFromBody || inferredName || "Nessus Report";
+
+        const analysisResult = await analyzePdfToJson(req.file.path, reportName);
+        const importResult = await importNessusReport({
+            reportName,
+            payload: analysisResult.analysis,
+        });
 
         return res.json({
             ok: true,
+            reportName,
             savedAs: req.file.filename,
             fullPath: req.file.path,
             bytes: stat.size,
             mimetype: req.file.mimetype,
             originalname: req.file.originalname,
+            analysis: {
+                outputPath: analysisResult.outputPath,
+                pageCount: analysisResult.pageCount,
+                vulnerabilityCount: analysisResult.analysis?.vulnerabilities?.length || 0,
+            },
+            db: importResult,
         });
     } catch (err) {
         next(err);

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createReportWithData } from "../controllers/reportController.js";
+import { createReportWithData, getLatestReportWithItems } from "../controllers/reportController.js";
 
 const router = Router();
 
@@ -12,5 +12,6 @@ router.get("/", (_req, res) => {
 });
 
 router.post("/", createReportWithData);
+router.get("/latest", getLatestReportWithItems);
 
 export default router;
