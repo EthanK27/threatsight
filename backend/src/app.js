@@ -9,8 +9,10 @@ app.use(cors());
 app.use(express.json());
 app.use("/api/analysis", analysisRoutes);
 
-
-app.get("/health", (req, res) => res.json({ ok: true }));
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`);
+});
+app.get("/health", (req, res) => res.status(200).json({ ok: true, service: "backend" }));
 
 app.use("/api/reports", reportRoutes);
 
