@@ -17,7 +17,11 @@ export default function Dashboard() {
             {/* Top bar */}
             <header className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-accent/20">
                 <div className="flex items-center gap-3">
-                    <div className="w-3 h-3 rounded-sm bg-textMain/80" />
+                    <img
+                        src="/ThreatSight-logo.png"
+                        alt="ThreatSite icon"
+                        className="h-10 w-10 rounded-sm object-cover"
+                    />
                     <div>
                         <div className="text-lg font-semibold tracking-wide">ThreatSite</div>
                         <div className="text-xs text-textMain/70">Security Dashboard</div>

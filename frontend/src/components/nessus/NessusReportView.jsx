@@ -3,7 +3,7 @@ import * as echarts from "echarts";
 import NessusFindingsTable from "./NessusFindingsTable";
 import { normalizeSeverity, SEVERITY_COLORS, SEVERITY_ORDER } from "../../utils/severity";
 
-const CHART_SEVERITIES = ["Critical", "High", "Medium", "Low", "Info"];
+const CHART_SEVERITIES = ["Critical", "High", "Medium", "Low"];
 
 export default function NessusReportView({ findings = [] }) {
   const severityChartRef = useRef(null);
@@ -140,7 +140,19 @@ export default function NessusReportView({ findings = [] }) {
 
   return (
     <div className="w-full">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="rounded-xl border border-slate-700 bg-slate-950/40 p-4">
+          <div className="text-sm font-semibold text-slate-200">Severity Counts</div>
+          <div ref={severityChartRef} className="mt-3 h-64 w-full" />
+        </div>
+
+        <div className="rounded-xl border border-slate-700 bg-slate-950/40 p-4">
+          <div className="text-sm font-semibold text-slate-200">Top Affected Hosts</div>
+          <div ref={hostChartRef} className="mt-3 h-64 w-full" />
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
         <div className="rounded-xl border border-slate-700 bg-slate-950/40 p-3">
           <div className="text-xs text-slate-400">Total Findings</div>
           <div className="mt-1 text-xl font-semibold text-slate-100">{summary.total}</div>
@@ -159,16 +171,9 @@ export default function NessusReportView({ findings = [] }) {
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-xl border border-slate-700 bg-slate-950/40 p-4">
-          <div className="text-sm font-semibold text-slate-200">Severity Counts</div>
-          <div ref={severityChartRef} className="mt-3 h-64 w-full" />
-        </div>
-
-        <div className="rounded-xl border border-slate-700 bg-slate-950/40 p-4">
-          <div className="text-sm font-semibold text-slate-200">Top Affected Hosts</div>
-          <div ref={hostChartRef} className="mt-3 h-64 w-full" />
-        </div>
+      <div className="mt-4 rounded-xl border border-slate-700 bg-slate-950/40 p-4">
+        <div className="text-sm font-semibold text-slate-200">AI Section</div>
+        <div className="mt-3 h-32 rounded-lg border border-dashed border-slate-600/80 bg-slate-900/40" />
       </div>
 
       <div className="mt-4">
