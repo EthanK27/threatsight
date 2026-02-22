@@ -6,10 +6,10 @@ import { normalizeSeverity, severityColor } from "../utils/severity";
 
 const LEVELS = ["Critical", "High", "Medium", "Low"];
 const QUICK = [
-  "Summarize selected logs",
-  "Why is this suspicious?",
-  "Show likely MITRE technique",
-  "Create investigation checklist",
+    "Identify the most aggressive source IP and explain why it is high priority.",
+    "Map this activity to likely ATT&CK tactics and include confidence level.",
+    "Create an incident-response checklist for this alert from containment to recovery.",
+    "Separate likely brute-force noise from signs of real compromise.",
 ];
 
 const protoMap = { 22: "SSH", 53: "DNS", 80: "HTTP", 443: "TLS", 445: "SMB", 3389: "RDP" };

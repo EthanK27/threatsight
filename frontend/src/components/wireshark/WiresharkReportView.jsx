@@ -4,10 +4,10 @@ import WiresharkFindingsTable from "./WiresharkFindingsTable";
 
 const PROTOCOL_COLORS = ["#22c55e", "#3b82f6", "#f97316", "#eab308", "#a855f7", "#14b8a6"];
 const QUICK_PROMPTS = [
-  "Summarize selected logs",
-  "Why is this suspicious?",
-  "Show likely MITRE technique",
-  "Create investigation checklist",
+    "Identify top suspicious source and destination IPs with reasons for concern.",
+    "Map notable traffic patterns to likely ATT&CK tactics and explain confidence.",
+    "Build a step-by-step triage checklist for the most suspicious flow first.",
+    "List likely benign traffic vs likely malicious traffic from the current packet set.",
 ];
 
 function normalizeProtocol(value) {

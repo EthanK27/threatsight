@@ -5,10 +5,10 @@ import { normalizeSeverity, SEVERITY_COLORS, SEVERITY_ORDER } from "../../utils/
 
 const CHART_SEVERITIES = ["Critical", "High", "Medium", "Low"];
 const QUICK_PROMPTS = [
-  "Summarize selected logs",
-  "Why is this suspicious?",
-  "Show likely MITRE technique",
-  "Create investigation checklist",
+    "Prioritize the top 5 Critical/High findings by exploit risk and business impact.",
+    "Give a remediation plan for the most affected host, ordered by fastest risk reduction.",
+    "Identify findings with high CVSS/VPR/EPSS and explain why they should be patched first.",
+    "List likely false positives to validate before remediation with quick verification steps.",
 ];
 
 export default function NessusReportView({ findings = [] }) {
