@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Report from "../models/Report.js";
 import VulnNessus from "../models/VulnNessus.js";
 import VulnWireshark from "../models/VulnWireshark.js";
@@ -76,10 +77,10 @@ export const createReportWithData = async (req, res, next) => {
 export const getLatestReportWithItems = async (req, res, next) => {
   try {
     const mode = req.query.mode || "Nessus";
-    if (mode !== "Nessus") {
+    if (!["Nessus", "Wireshark", "Honeypot"].includes(mode)) {
       return res.status(400).json({
         ok: false,
-        error: "Only mode=Nessus is currently supported on this endpoint",
+        error: "mode must be Nessus, Wireshark, or Honeypot",
       });
     }
 
@@ -92,11 +93,32 @@ export const getLatestReportWithItems = async (req, res, next) => {
       });
     }
 
-    const items = await VulnNessus.find({ reportId: report._id }).lean();
+    const modelByMode = {
+      Nessus: VulnNessus,
+      Wireshark: VulnWireshark,
+      Honeypot: VulnHoneypot,
+    };
+
+    const items = await modelByMode[mode].find({ reportId: report._id }).lean();
     return res.json({
       ok: true,
       report,
       items,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const getAllWiresharkItems = async (_req, res, next) => {
+  try {
+    const collection = mongoose.connection.db.collection("vulnwiresharks");
+    const items = await collection.find({}).sort({ timestamp: -1, _id: -1 }).toArray();
+
+    return res.json({
+      ok: true,
+      items,
+      count: items.length,
     });
   } catch (err) {
     next(err);

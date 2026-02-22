@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createReportWithData, getLatestReportWithItems } from "../controllers/reportController.js";
+import { createReportWithData, getAllWiresharkItems, getLatestReportWithItems } from "../controllers/reportController.js";
 
 const router = Router();
 
@@ -13,5 +13,6 @@ router.get("/", (_req, res) => {
 
 router.post("/", createReportWithData);
 router.get("/latest", getLatestReportWithItems);
+router.get("/wireshark/items", getAllWiresharkItems);
 
 export default router;

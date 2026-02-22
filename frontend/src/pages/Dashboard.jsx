@@ -23,7 +23,7 @@ export default function Dashboard() {
                         className="h-10 w-10 rounded-sm object-cover"
                     />
                     <div>
-                        <div className="text-lg font-semibold tracking-wide">ThreatSite</div>
+                        <div className="text-lg font-semibold tracking-wide">ThreatSight</div>
                         <div className="text-xs text-textMain/70">Security Dashboard</div>
                     </div>
                 </div>
