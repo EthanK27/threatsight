@@ -1,6 +1,7 @@
 # 🛡️ ThreatSight — Cloud-Native SOC Dashboard
 
 A full-stack, cloud-hosted **SOC-style security platform** that ingests telemetry (honeypot events, Nessus findings, and Wireshark/PCAP-derived logs), enriches it with AI-assisted analysis, and visualizes results in a modern dashboard.
+This is a project created at Hack@Davidson 2026. If you would like to view the devpost, click [here](https://devpost.com/software/threatsight).
 
 ---
 
